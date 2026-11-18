@@ -1,0 +1,186 @@
+import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.TestFactory;
+
+import java.lang.reflect.Method;
+import java.util.stream.Stream;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
+
+// CodeSignal-style test runner. Each case is an ordered list of operations with an
+// expected result per operation. A null expected value means "don't check" (void calls).
+//
+// Run with: mvn test   (Java 17+). Each case shows up as its own named test, grouped by level.
+public class WorkingHoursRegisterTest {
+
+    record Case(int level, String name, Object[][] ops, Object[] expected) {}
+
+    static final List<Case> CASES = List.of(
+
+        // ---------- Level 1: basic CRUD ----------
+        new Case(1, "new employee has zero minutes",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"totalMinutes", "A"}},
+            new Object[]{null, 0L}),
+
+        new Case(1, "single shift counts its minutes",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"swipe", "A", 0L},
+                {"swipe", "A", 120L},
+                {"totalMinutes", "A"}},
+            new Object[]{null, null, null, 120L}),
+
+        new Case(1, "multiple shifts are summed",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"swipe", "A", 0L}, {"swipe", "A", 60L},
+                {"swipe", "A", 100L}, {"swipe", "A", 160L},
+                {"totalMinutes", "A"}},
+            new Object[]{null, null, null, null, null, 120L}),
+
+        new Case(1, "open swipe-in does not count",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"swipe", "A", 0L},
+                {"totalMinutes", "A"}},
+            new Object[]{null, null, 0L}),
+
+        // ---------- Level 2: top N ----------
+        new Case(2, "ties broken by id ascending",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"addEmployee", "B", "Engineer", 6000L, 0L},
+                {"addEmployee", "C", "Engineer", 6000L, 0L},
+                {"swipe", "A", 0L}, {"swipe", "A", 120L},
+                {"swipe", "B", 0L}, {"swipe", "B", 60L},
+                {"swipe", "C", 0L}, {"swipe", "C", 120L},
+                {"topN", 2}},
+            new Object[]{null, null, null, null, null, null, null, null, null, List.of("A", "C")}),
+
+        new Case(2, "n larger than employee count returns all",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"addEmployee", "B", "Engineer", 6000L, 0L},
+                {"swipe", "B", 0L}, {"swipe", "B", 60L},
+                {"topN", 10}},
+            new Object[]{null, null, null, null, List.of("B", "A")}),
+
+        new Case(2, "n of zero returns empty",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"topN", 0}},
+            new Object[]{null, List.of()}),
+
+        // ---------- Level 3: promotion and salary ----------
+        new Case(3, "promotion stays pending until next swipe-in",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"swipe", "A", 0L}, {"swipe", "A", 60L},
+                {"promote", "A", "Senior", 9000L, 70L},
+                {"positionOf", "A"}},
+            new Object[]{null, null, null, null, "Engineer"}),
+
+        new Case(3, "promotion applies on next swipe-in and pays new rate",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"swipe", "A", 0L}, {"swipe", "A", 60L},
+                {"promote", "A", "Senior", 9000L, 70L},
+                {"swipe", "A", 120L}, {"swipe", "A", 180L},
+                {"positionOf", "A"},
+                {"salaryBetween", "A", 0L, 200L}},
+            new Object[]{null, null, null, null, null, null, "Senior", 15000L}),
+
+        new Case(3, "later pending promotion replaces earlier one",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"promote", "A", "Lead", 7000L, 10L},
+                {"promote", "A", "Principal", 8000L, 20L},
+                {"swipe", "A", 30L}, {"swipe", "A", 90L},
+                {"positionOf", "A"},
+                {"salaryBetween", "A", 0L, 100L}},
+            new Object[]{null, null, null, null, null, "Principal", 8000L}),
+
+        new Case(3, "salary counts shifts by start time",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"swipe", "A", 0L}, {"swipe", "A", 60L},
+                {"swipe", "A", 120L}, {"swipe", "A", 180L},
+                {"salaryBetween", "A", 0L, 100L},
+                {"salaryBetween", "A", 0L, 200L}},
+            new Object[]{null, null, null, null, null, 6000L, 12000L}),
+
+        // ---------- Level 4: grant-period double pay ----------
+        new Case(4, "shift fully inside grant is doubled",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"addGrant", 100L, 200L},
+                {"swipe", "A", 110L}, {"swipe", "A", 170L},
+                {"totalDoublePay"}},
+            new Object[]{null, null, null, null, 6000L}),
+
+        new Case(4, "shift overlapping grant start is not doubled",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"addGrant", 100L, 200L},
+                {"swipe", "A", 90L}, {"swipe", "A", 150L},
+                {"totalDoublePay"}},
+            new Object[]{null, null, null, null, 0L}),
+
+        new Case(4, "shift ending exactly at grant end is doubled",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"addGrant", 100L, 200L},
+                {"swipe", "A", 140L}, {"swipe", "A", 200L},
+                {"totalDoublePay"}},
+            new Object[]{null, null, null, null, 6000L}),
+
+        new Case(4, "double pay accumulates across shifts",
+            new Object[][]{
+                {"addEmployee", "A", "Engineer", 6000L, 0L},
+                {"addGrant", 100L, 400L},
+                {"swipe", "A", 110L}, {"swipe", "A", 170L},
+                {"swipe", "A", 200L}, {"swipe", "A", 260L},
+                {"totalDoublePay"}},
+            new Object[]{null, null, null, null, null, null, 12000L})
+    );
+
+    @TestFactory
+    Stream<DynamicTest> cases() {
+        return CASES.stream().map(c ->
+            DynamicTest.dynamicTest("L" + c.level() + " " + c.name(), () -> run(c)));
+    }
+
+    static void run(Case c) throws Exception {
+        WorkingHoursRegister target = new WorkingHoursRegister();
+        for (int i = 0; i < c.ops().length; i++) {
+            Object[] op = c.ops()[i];
+            String name = (String) op[0];
+            Object[] callArgs = Arrays.copyOfRange(op, 1, op.length);
+            Method m = findMethod(target.getClass(), name, callArgs.length);
+            Object result = m.invoke(target, callArgs);
+            Object expected = c.expected()[i];
+            if (expected != null && !same(result, expected)) {
+                throw new AssertionError("op " + i + " " + name + Arrays.toString(callArgs)
+                        + " expected " + expected + " but got " + result);
+            }
+        }
+    }
+
+    static Method findMethod(Class<?> cls, String name, int paramCount) {
+        for (Method m : cls.getMethods()) {
+            if (m.getName().equals(name) && m.getParameterCount() == paramCount) {
+                return m;
+            }
+        }
+        throw new IllegalStateException("missing method " + name + " with " + paramCount + " args");
+    }
+
+    static boolean same(Object actual, Object expected) {
+        if (actual instanceof Number a && expected instanceof Number e) {
+            return a.longValue() == e.longValue();
+        }
+        return Objects.equals(actual, expected);
+    }
+}
