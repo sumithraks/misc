@@ -1,0 +1,1 @@
+Problem: Given an array of wood pieces and an integer k, find the maximum length len such that you can get at least k pieces of wood of length len
